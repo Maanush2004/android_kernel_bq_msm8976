@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -47,6 +47,10 @@
 #define MAX_LANES                                   4
 #define CLOCK_OFFSET                              0x700
 #define CSIPHY_SOF_DEBUG_COUNT                      2
+
+static struct camera_vreg_t csiphy_vreg_info[] = {
+	{"qcom,mipi-csi-vdd", 0, 0, 12000},
+};
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -758,6 +762,21 @@ static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
 		pr_err("%s: failed to vote for AHB\n", __func__);
 		return rc;
 	}
+	rc = msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 1);
+	if (rc < 0) {
+		pr_err("%s: regulator config failed\n", __func__);
+		goto csiphy_vreg_config_fail;
+	}
+	rc = msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 1);
+	if (rc < 0) {
+		pr_err("%s: regulator enable failed\n", __func__);
+		goto csiphy_vreg_enable_fail;
+	}
+
 
 	CDBG("%s:%d called\n", __func__, __LINE__);
 
@@ -802,6 +821,15 @@ csiphy_resource_fail:
 		CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to vote for AHB\n", __func__);
 	return rc;
+csiphy_vreg_enable_fail:
+	rc = msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+csiphy_vreg_config_fail:
+	iounmap(csiphy_dev->base);
+	csiphy_dev->base = NULL;
+	return rc;
+
 }
 #else
 static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
@@ -835,6 +863,22 @@ static int msm_csiphy_init(struct csiphy_device *csiphy_dev)
 		pr_err("%s: failed to vote for AHB\n", __func__);
 		return rc;
 	}
+
+	rc = msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 1);
+	if (rc < 0) {
+		pr_err("%s: regulator config failed\n", __func__);
+		goto csiphy_vreg_config_fail;
+	}
+	rc = msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 1);
+	if (rc < 0) {
+		pr_err("%s: regulator enable failed\n", __func__);
+		goto csiphy_vreg_enable_fail;
+	}
+
 
 	rc = msm_camera_clk_enable(&csiphy_dev->pdev->dev,
 		csiphy_dev->csiphy_clk_info, csiphy_dev->csiphy_clk,
@@ -873,6 +917,14 @@ csiphy_resource_fail:
 	if (cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CSIPHY,
 		CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to vote for AHB\n", __func__);
+	return rc;
+csiphy_vreg_enable_fail:
+	rc = msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+csiphy_vreg_config_fail:
+	iounmap(csiphy_dev->base);
+	csiphy_dev->base = NULL;
 	return rc;
 }
 #endif
@@ -975,6 +1027,18 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 		msm_camera_clk_enable(&csiphy_dev->pdev->dev,
 			csiphy_dev->csiphy_3p_clk_info,
 			csiphy_dev->csiphy_3p_clk, 2, false);
+	}
+
+	msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+	msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+
+	if (!IS_ERR_OR_NULL(csiphy_dev->reg_ptr)) {
+		regulator_disable(csiphy_dev->reg_ptr);
+		regulator_put(csiphy_dev->reg_ptr);
 	}
 
 	csiphy_dev->csiphy_state = CSIPHY_POWER_DOWN;
@@ -1081,6 +1145,18 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 		msm_camera_clk_enable(&csiphy_dev->pdev->dev,
 			csiphy_dev->csiphy_3p_clk_info,
 			csiphy_dev->csiphy_3p_clk, 2, false);
+	}
+
+	msm_camera_enable_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+	msm_camera_config_vreg(&csiphy_dev->pdev->dev,
+		csiphy_vreg_info, ARRAY_SIZE(csiphy_vreg_info),
+		NULL, 0, &csiphy_dev->csi_vdd, 0);
+
+	if (!IS_ERR_OR_NULL(csiphy_dev->reg_ptr)) {
+		regulator_disable(csiphy_dev->reg_ptr);
+		regulator_put(csiphy_dev->reg_ptr);
 	}
 
 	csiphy_dev->csiphy_state = CSIPHY_POWER_DOWN;
@@ -1317,6 +1393,7 @@ MAX_CLK_ERROR:
 static int csiphy_probe(struct platform_device *pdev)
 {
 	struct csiphy_device *new_csiphy_dev;
+	uint32_t csi_vdd_voltage = 0;
 	int rc = 0;
 
 	new_csiphy_dev = kzalloc(sizeof(struct csiphy_device), GFP_KERNEL);
@@ -1344,6 +1421,19 @@ static int csiphy_probe(struct platform_device *pdev)
 		CDBG("%s: device id = %d\n", __func__, pdev->id);
 	}
 
+
+	rc = of_property_read_u32((&pdev->dev)->of_node,
+		"qcom,csi-vdd-voltage", &csi_vdd_voltage);
+	if (rc < 0) {
+		pr_err("%s:%d failed to read qcom,csi-vdd-voltage\n",
+			__func__, __LINE__);
+		return rc;
+	}
+	CDBG("%s:%d reading mipi_csi_vdd is %d\n", __func__, __LINE__,
+		csi_vdd_voltage);
+
+	csiphy_vreg_info[0].min_voltage = csi_vdd_voltage;
+	csiphy_vreg_info[0].max_voltage = csi_vdd_voltage;
 	new_csiphy_dev->pdev = pdev;
 	new_csiphy_dev->msm_sd.sd.internal_ops = &msm_csiphy_internal_ops;
 	new_csiphy_dev->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
